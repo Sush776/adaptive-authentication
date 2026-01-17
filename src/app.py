@@ -46,11 +46,6 @@ class PredictionResult(BaseModel):
 
 # -------------------------------
 # Helper Functions
-# “Risk thresholds were empirically selected based on ROC-AUC analysis and practical 
-# security considerations. A lower threshold minimizes unnecessary user friction for 
-# legitimate logins, while a higher threshold prioritizes security by enforcing stronger 
-# authentication for high-risk events. This tiered strategy balances usability and 
-# security, consistent with adaptive authentication practices in real-world IAM systems.”
 # -------------------------------
 def adaptive_mfa(prob: float) -> str:
     if prob < 0.3:
@@ -63,7 +58,13 @@ def adaptive_mfa(prob: float) -> str:
 def predict_event(event: LoginEvent) -> PredictionResult:
     df = pd.DataFrame([event.dict()])
     X_processed = preprocessor.transform(df)
-    prob = best_model.predict_proba(X_processed)[:, 1][0]
+
+    # -------------------------------
+    # IMPORTANT: Use correct positive class index
+    # -------------------------------
+    positive_class_index = list(best_model.classes_).index(1)
+    prob = best_model.predict_proba(X_processed)[0][positive_class_index]
+
     return PredictionResult(risk_prob=prob, MFA=adaptive_mfa(prob))
 
 # -------------------------------
@@ -122,13 +123,6 @@ def predict(events: List[LoginEvent] = Body(..., examples={
         ]
     }
 })):
-    # results = []
-    # for e in events:
-    #     result = predict_event(e)     # model prediction
-    #     log_prediction(e, result.risk_prob, result.MFA)     # log this prediction
-    #     results.append(result)        # collect result
-    
-    # return results
     results = []
     for e in events:
         try:
@@ -138,11 +132,12 @@ def predict(events: List[LoginEvent] = Body(..., examples={
             # collect metrics
             metrics_store.record_prediction(
                 risk_score=result.risk_prob,
-                mfa_required=(result.MFA == "REQUIRED")
+                mfa_required=(result.MFA == "High Risk → Step-up / Biometric MFA")
             )
 
             # logging to CSV
             log_prediction(e, result.risk_prob, result.MFA)
+
         except Exception:
             metrics_store.record_error()
             raise
